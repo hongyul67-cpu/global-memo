@@ -1,0 +1,28 @@
+# 호주 현장학습 · 현장 기록장 (Field Log)
+
+호주 글로벌 현장학습(용접·산업 현장 견학)에서 하루 한 번씩 기록을 남기는 모바일 웹앱입니다.
+링크 하나로 열리는 단일 `index.html` (React + Babel + Tailwind, 모두 CDN)로 되어 있어 GitHub Pages에 그대로 올라갑니다.
+
+- 대상: 고1·2학년 8명 + 인솔교사 1명
+- 순수 **기록 전용** — 안전·통솔은 구글 지도·카톡이 담당
+- 기록은 사용하는 **기기(브라우저)에 자동 저장**(localStorage)
+- 저녁마다 **구글 폼**으로 그날 기록 제출 → 교사 스프레드시트에 자동 집계
+
+## 기록 1건 항목
+- 날짜(자동) · 장소 · 방문유형(학교(TAFE)/회사/기타) · 키워드(안전/기술·용접/교육·제도/문화/음식/기타)
+- **본 것(사실)** — 파랑
+- **내 생각·질문**(인상 깊었던 점+이유 / 한국과 다른 점 / 궁금한 점) — 호박색
+- 사진 2~5장 (2장 미만이면 저장 불가, 업로드 시 1024px로 자동 축소)
+
+## 파일 구성
+- `index.html` — 배포용 단일 파일 앱 (이 파일 하나면 동작)
+- `field-log.jsx` — 원본 React 소스 (참고용)
+
+## GitHub Pages 켜는 법
+1. GitHub 저장소 → **Settings → Pages**
+2. **Source**: `Deploy from a branch`
+3. **Branch**: `claude/file-upload-e7viro` / 폴더 `/ (root)` 선택 후 **Save**
+4. 잠시 후 `https://hongyul67-cpu.github.io/global-memo/` 주소로 열립니다.
+
+## 구글 폼
+저녁 제출용 폼: https://forms.gle/X42oD6U71bcfTSydA
