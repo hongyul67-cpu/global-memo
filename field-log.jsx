@@ -168,9 +168,11 @@ export default function App() {
     setRecords((rs) => rs.filter((r) => r.id !== id));
     setConfirmId(null);
   }
-  function openExport() {
+  function openExport(onlyToday) {
+    const today = todayStr();
+    const hasToday = records.some((r) => r.date === today);
     const sel = {};
-    records.forEach((r) => (sel[r.id] = true));
+    records.forEach((r) => (sel[r.id] = onlyToday && hasToday ? r.date === today : true));
     setSelected(sel);
     setScreen("export");
   }
@@ -307,12 +309,12 @@ export default function App() {
               </div>
             )}
 
-            <a href={FORM_URL} target="_blank" rel="noopener noreferrer"
-              className="mt-3 flex items-center justify-between rounded-xl px-4 py-3 no-print"
-              style={{ background: C.amber, color: "#fff" }}>
-              <span className="text-sm font-semibold">저녁에 · 오늘 기록 구글 폼으로 제출하기</span>
+            <button type="button" onClick={() => openExport(true)} disabled={records.length === 0}
+              className="mt-3 w-full flex items-center justify-between rounded-xl px-4 py-3 no-print"
+              style={{ background: C.amber, color: "#fff", opacity: records.length ? 1 : 0.5 }}>
+              <span className="text-sm font-semibold">저녁에 · 오늘 기록 PDF로 제출하기</span>
               <span className="text-lg leading-none">→</span>
-            </a>
+            </button>
 
             <button type="button" onClick={openBackup}
               className="mt-2 w-full flex items-center justify-between rounded-xl px-4 py-2.5 no-print"
@@ -503,11 +505,12 @@ export default function App() {
             <div className="no-print">
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setScreen("list")} className="text-sm font-medium" style={{ color: C.steel }}>‹ 목록</button>
-                <div className="text-sm font-semibold">PDF로 내보내기</div>
+                <div className="text-sm font-semibold">PDF 저장 · 제출</div>
                 <div className="w-10" />
               </div>
               <p className="mt-3 text-sm leading-relaxed" style={{ color: C.sub }}>
-                포함할 날짜를 고르고 <b>PDF로 저장</b>을 누르면 인쇄 화면이 열려요. 거기서 ‘대상’을 <b>PDF로 저장</b>으로 바꾸면 됩니다.
+                <b style={{color:C.blue}}>①</b> 포함할 날짜를 고르고 <b>PDF로 저장</b> — 인쇄 화면에서 ‘대상’을 <b>PDF로 저장</b>으로 바꾸면 파일이 저장돼요.<br/>
+                <b style={{color:C.amber}}>②</b> <b>구글 폼 열기</b>를 눌러, 방금 저장한 PDF 파일을 <b>첨부</b>하고 제출하면 끝!
               </p>
               <div className="mt-3 space-y-2">
                 {sorted.map((r) => (
@@ -521,8 +524,13 @@ export default function App() {
               <button type="button" onClick={() => window.print()} disabled={chosen.length === 0}
                 className="mt-4 w-full rounded-xl py-3 text-base font-semibold"
                 style={{ background: C.blue, color: "#fff", opacity: chosen.length ? 1 : 0.4 }}>
-                PDF로 저장 ({chosen.length}개)
+                ① PDF로 저장 ({chosen.length}개)
               </button>
+              <a href={FORM_URL} target="_blank" rel="noopener noreferrer"
+                className="mt-2 w-full flex items-center justify-center rounded-xl py-3 text-base font-semibold"
+                style={{ background: C.amber, color: "#fff" }}>
+                ② 구글 폼 열어 PDF 첨부하기
+              </a>
               <div className="mt-6 text-xs font-semibold tracking-widest uppercase" style={{ color: C.steel }}>미리보기</div>
             </div>
 
@@ -622,7 +630,7 @@ export default function App() {
       {(screen === "list") && (
         <div className="fixed bottom-0 left-0 right-0 no-print" style={{ background: "linear-gradient(to top, rgba(244,246,249,1) 60%, rgba(244,246,249,0))" }}>
           <div className="mx-auto w-full max-w-md px-4 pb-5 pt-3 flex gap-3">
-            <button type="button" onClick={openExport} disabled={records.length === 0}
+            <button type="button" onClick={() => openExport(false)} disabled={records.length === 0}
               className="rounded-xl px-4 py-3.5 text-sm font-semibold"
               style={{ background: C.card, color: C.blue, border: `1px solid ${C.blueLine}`, opacity: records.length ? 1 : 0.4 }}>
               PDF
