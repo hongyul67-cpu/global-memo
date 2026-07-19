@@ -7,6 +7,14 @@
 - 순수 **기록 전용** — 안전·통솔은 구글 지도·카톡이 담당
 - 기록은 사용하는 **기기(브라우저)에 자동 저장**(localStorage)
 - 저녁마다 **구글 폼**으로 그날 기록 제출 → 교사 스프레드시트에 자동 집계
+- **백업/복원** 내장 — 전체 기록을 파일 1개로 내보내고, 새 폰에서 불러오기(폰 분실 대비)
+
+## 주요 기능
+- 본 것(파랑) / 내 생각(호박색) 색 구분으로 사실과 생각을 분리
+- 사진 자동 축소(1024px) + EXIF 회전 보정, 기록당 2~5장
+- 목록 → **기록 백업 · 복원**: 내보내기(.json) / 불러오기(합치기·전부 바꾸기)
+- **PDF**: 화면을 보고서처럼 꾸며 ‘인쇄 → PDF로 저장’
+- 이름 수정, 기록 삭제 확인 모달, 구글 폼 제출 버튼
 
 ## 기록 1건 항목
 - 날짜(자동) · 장소 · 방문유형(학교(TAFE)/회사/기타) · 키워드(안전/기술·용접/교육·제도/문화/음식/기타)
@@ -17,12 +25,17 @@
 ## 파일 구성
 - `index.html` — 배포용 단일 파일 앱 (이 파일 하나면 동작)
 - `field-log.jsx` — 원본 React 소스 (참고용)
+- `guide.html` — 학생용 사용 안내 한 장 (폰으로 보거나 인쇄용)
+
+## 링크 (Pages 켠 뒤)
+- 앱: `https://hongyul67-cpu.github.io/global-memo/`
+- 사용 안내: `https://hongyul67-cpu.github.io/global-memo/guide.html`
 
 ## GitHub Pages 켜는 법
 1. GitHub 저장소 → **Settings → Pages**
 2. **Source**: `Deploy from a branch`
 3. **Branch**: `claude/file-upload-e7viro` / 폴더 `/ (root)` 선택 후 **Save**
-4. 잠시 후 `https://hongyul67-cpu.github.io/global-memo/` 주소로 열립니다.
+4. 잠시 후 위 주소로 열립니다.
 
 ## 구글 폼
 저녁 제출용 폼: https://forms.gle/X42oD6U71bcfTSydA
