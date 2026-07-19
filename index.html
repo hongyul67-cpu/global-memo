@@ -47,24 +47,37 @@ function prettyDate(s) {
   const [y, m, d] = s.split("-");
   return `${y}. ${m}. ${d}.`;
 }
-function downscale(file, max = 1024, quality = 0.72) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if (w > h && w > max) { h = Math.round((h * max) / w); w = max; }
-        else if (h >= w && h > max) { w = Math.round((w * max) / h); h = max; }
-        const cv = document.createElement("canvas");
-        cv.width = w; cv.height = h;
-        cv.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(cv.toDataURL("image/jpeg", quality));
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
+// 사진 축소: EXIF 회전 보정(createImageBitmap) + 실패 시 null 반환(멈춤 방지)
+async function downscale(file, max = 1024, quality = 0.72) {
+  const fit = (w, h) => {
+    if (w > h && w > max) return [max, Math.round((h * max) / w)];
+    if (h >= w && h > max) return [Math.round((w * max) / h), max];
+    return [w, h];
+  };
+  try {
+    let src, sw, sh, bmp;
+    if (window.createImageBitmap) {
+      try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+      catch (e) { bmp = await createImageBitmap(file); }
+      src = bmp; sw = bmp.width; sh = bmp.height;
+    } else {
+      src = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = (e) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = e.target.result; };
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height;
+    }
+    const [w, h] = fit(sw, sh);
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(src, 0, 0, w, h);
+    if (bmp && bmp.close) bmp.close();
+    return cv.toDataURL("image/jpeg", quality);
+  } catch (e) {
+    return null; // 이미지가 아니거나 읽기 실패 → 이 파일은 건너뜀
+  }
 }
 
 // ---- 자동 저장 (이 기기에 보관) ----
@@ -154,8 +167,8 @@ function App() {
     const room = 5 - form.photos.length;
     if (room <= 0) return;
     const next = [];
-    for (const f of list.slice(0, room)) next.push(await downscale(f));
-    setForm((f) => ({ ...f, photos: [...f.photos, ...next] }));
+    for (const f of list.slice(0, room)) { const d = await downscale(f); if (d) next.push(d); }
+    if (next.length) setForm((f) => ({ ...f, photos: [...f.photos, ...next] }));
   }
   function removePhoto(i) {
     setForm((f) => ({ ...f, photos: f.photos.filter((_, idx) => idx !== i) }));
