@@ -103,7 +103,7 @@ function Eyebrow({ children }) {
 
 function App() {
   const persisted = loadStore();
-  const [screen, setScreen] = useState(persisted && persisted.name ? "list" : "start"); // start | list | form | export
+  const [screen, setScreen] = useState(persisted && persisted.name ? "list" : "start"); // start | list | form | export | backup
   const [name, setName] = useState(persisted?.name || "");
   const [nameDraft, setNameDraft] = useState("");
   const [records, setRecords] = useState(persisted?.records || []);
@@ -113,7 +113,10 @@ function App() {
   const [editingName, setEditingName] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [storeWarn, setStoreWarn] = useState(false);
+  const [importPending, setImportPending] = useState(null); // 불러온 백업 데이터(확인 대기)
+  const [backupMsg, setBackupMsg] = useState("");
   const fileRef = useRef(null);
+  const backupRef = useRef(null);
 
   // 기록·이름이 바뀔 때마다 이 기기에 자동 저장
   useEffect(() => {
@@ -177,6 +180,58 @@ function App() {
     records.forEach((r) => (sel[r.id] = true));
     setSelected(sel);
     setScreen("export");
+  }
+  function openBackup() {
+    setBackupMsg(""); setImportPending(null); setScreen("backup");
+  }
+  // ---- 백업(전체 내보내기 / 불러오기) ----
+  function exportBackup() {
+    try {
+      const data = { app: "fieldlog", version: 1, exportedAt: new Date().toISOString(), name, records };
+      const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `기록백업-${(name || "이름").trim()}-${todayStr().replace(/-/g, "")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setBackupMsg(`백업 파일을 저장했어요. (기록 ${records.length}개) 다운로드 폴더나 파일 앱에서 확인하세요.`);
+    } catch (e) {
+      setBackupMsg("백업 파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }
+  function readBackup(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data || !Array.isArray(data.records)) throw new Error("bad");
+        setBackupMsg("");
+        setImportPending(data);
+      } catch (err) {
+        setBackupMsg("백업 파일을 읽을 수 없어요. 올바른 백업 파일(.json)인지 확인해 주세요.");
+      }
+    };
+    reader.onerror = () => setBackupMsg("파일을 여는 중 문제가 생겼어요.");
+    reader.readAsText(file);
+  }
+  function applyImport(mode) {
+    const data = importPending;
+    if (!data) return;
+    if (mode === "replace") {
+      setRecords(data.records);
+      if (data.name) setName(data.name);
+      setBackupMsg(`백업으로 전부 바꿨어요. (기록 ${data.records.length}개)`);
+    } else {
+      const existing = new Set(records.map((r) => r.id));
+      const added = data.records.filter((r) => !existing.has(r.id));
+      setRecords((rs) => [...rs, ...added]);
+      if (!name && data.name) setName(data.name);
+      setBackupMsg(`백업을 합쳤어요. 새로 추가된 기록 ${added.length}개 (중복 ${data.records.length - added.length}개는 건너뜀).`);
+    }
+    setImportPending(null);
   }
 
   const sorted = [...records].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -265,6 +320,13 @@ function App() {
               <span className="text-sm font-semibold">저녁에 · 오늘 기록 구글 폼으로 제출하기</span>
               <span className="text-lg leading-none">→</span>
             </a>
+
+            <button type="button" onClick={openBackup}
+              className="mt-2 w-full flex items-center justify-between rounded-xl px-4 py-2.5 no-print"
+              style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}` }}>
+              <span className="text-sm font-semibold">기록 백업 · 복원</span>
+              <span className="text-xs" style={{ color: C.steel }}>폰 분실 대비 →</span>
+            </button>
 
             {records.length === 0 ? (
               <div className="mt-10 rounded-2xl p-8 text-center" style={{ background: C.card, border: `1px dashed ${C.line}` }}>
@@ -513,6 +575,54 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* ---------------- BACKUP (export / import) ---------------- */}
+        {screen === "backup" && (
+          <div className="pt-6">
+            <div className="flex items-center justify-between">
+              <button type="button" onClick={() => setScreen("list")} className="text-sm font-medium" style={{ color: C.steel }}>‹ 목록</button>
+              <div className="text-sm font-semibold">백업 · 복원</div>
+              <div className="w-10" />
+            </div>
+
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.blueSoft, border: `1px solid ${C.blueLine}` }}>
+              <p className="text-sm leading-relaxed" style={{ color: C.blue }}>
+                기록은 이 폰에만 저장돼요. <b>폰을 잃어버리거나 앱(브라우저 기록)을 지우면 사라집니다.</b> 가끔 <b>백업 파일</b>을 저장해 두면, 새 폰에서 <b>불러오기</b>로 되살릴 수 있어요.
+              </p>
+            </div>
+
+            {/* 내보내기 */}
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <div className="text-sm font-bold">1. 백업 파일 저장 (내보내기)</div>
+              <p className="mt-1 text-sm" style={{ color: C.sub }}>지금까지의 기록 {records.length}개와 사진을 파일 하나로 저장해요.</p>
+              <button type="button" onClick={exportBackup} disabled={records.length === 0}
+                className="mt-3 w-full rounded-xl py-3 text-base font-semibold"
+                style={{ background: C.blue, color: "#fff", opacity: records.length ? 1 : 0.4 }}>
+                백업 파일 저장하기
+              </button>
+            </div>
+
+            {/* 불러오기 */}
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <div className="text-sm font-bold">2. 백업 파일 불러오기 (복원)</div>
+              <p className="mt-1 text-sm" style={{ color: C.sub }}>전에 저장한 백업 파일(.json)을 골라 기록을 되살려요.</p>
+              <button type="button" onClick={() => backupRef.current && backupRef.current.click()}
+                className="mt-3 w-full rounded-xl py-3 text-base font-semibold"
+                style={{ border: `1px solid ${C.blueLine}`, color: C.blue, background: C.blueSoft }}>
+                백업 파일 고르기
+              </button>
+              <input ref={backupRef} type="file" accept="application/json,.json"
+                style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", border: 0 }}
+                onChange={(e) => { if (e.target.files[0]) readBackup(e.target.files[0]); e.target.value = ""; }} />
+            </div>
+
+            {backupMsg && (
+              <div className="mt-4 rounded-xl px-3 py-2.5 text-sm font-medium" style={{ background: C.blueSoft, color: C.blue, border: `1px solid ${C.blueLine}` }}>
+                {backupMsg}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* bottom bar */}
@@ -562,6 +672,30 @@ function App() {
               <button type="button" onClick={() => setConfirmId(null)} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ border: `1px solid ${C.line}`, color: C.sub }}>그대로 두기</button>
               <button type="button" onClick={() => { doDelete(confirmId); setScreen("list"); }} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ background: "#B23B3B", color: "#fff" }}>지우기</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* import confirm */}
+      {importPending && (
+        <div className="fixed inset-0 flex items-end justify-center no-print" style={{ background: "rgba(27,39,51,0.4)" }} onClick={() => setImportPending(null)}>
+          <div className="w-full max-w-md m-4 rounded-2xl p-5" style={{ background: C.card }} onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-bold">백업을 불러올까요?</div>
+            <p className="mt-1 text-sm" style={{ color: C.sub }}>
+              파일에 기록 {importPending.records.length}개가 들어 있어요{importPending.name ? ` (이름: ${importPending.name})` : ""}. 지금 이 폰에는 {records.length}개가 있어요.
+            </p>
+            <button type="button" onClick={() => applyImport("merge")}
+              className="mt-4 w-full rounded-xl py-3 text-sm font-semibold" style={{ background: C.blue, color: "#fff" }}>
+              지금 기록에 합치기 (추천)
+            </button>
+            <button type="button" onClick={() => applyImport("replace")}
+              className="mt-2 w-full rounded-xl py-3 text-sm font-semibold" style={{ border: `1px solid ${C.line}`, color: C.sub }}>
+              이 파일로 전부 바꾸기
+            </button>
+            <button type="button" onClick={() => setImportPending(null)}
+              className="mt-2 w-full rounded-xl py-2.5 text-sm font-medium" style={{ color: C.steel }}>
+              취소
+            </button>
           </div>
         </div>
       )}
