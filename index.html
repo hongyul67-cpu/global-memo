@@ -289,7 +289,7 @@ function App() {
     setSending(false);
     setSendResult(
       fail === 0
-        ? { ok: true, msg: `제출 완료! 기록 ${sentIds.length}건을 선생님께 보냈어요.` }
+        ? { ok: true, msg: `제출 완료! 기록 ${sentIds.length}건을 PDF로 만들어 선생님께 보냈어요.` }
         : { ok: false, msg: `${sentIds.length}건 성공 · ${fail}건 실패.${lastErr ? ` (${lastErr})` : ""} 와이파이/스크립트 설정을 확인한 뒤 다시 눌러 주세요.` }
     );
   }
