@@ -443,7 +443,7 @@ export default function App() {
                 </div>
                 <div className="flex-1">
                   <label className="text-xs font-semibold" style={{ color: C.sub }}>장소</label>
-                  <input value={form.place} onChange={(e) => setF("place", e.target.value)} placeholder="예: 시드니 TAFE"
+                  <input value={form.place} onChange={(e) => setF("place", e.target.value)} placeholder="예: 멜버른 TAFE"
                     className="mt-1 w-full rounded-lg px-2 py-2 text-sm focus:outline-none focus-visible:ring-2"
                     style={{ border: `1px solid ${C.line}` }} />
                 </div>
