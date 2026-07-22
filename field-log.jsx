@@ -257,10 +257,10 @@ export default function App() {
     const targets = records.filter((r) => !r.sentAt);
     if (!targets.length) { setSendResult({ ok: true, msg: "보낼 새 기록이 없어요. 모두 제출되었습니다." }); return; }
     setSending(true); setSendResult(null);
-    const sentIds = []; let fail = 0;
+    const sentIds = []; let fail = 0; let lastErr = "";
     for (const r of targets) {
       try { await postRecord(r); sentIds.push(r.id); }
-      catch (e) { fail++; }
+      catch (e) { fail++; lastErr = (e && e.message) ? e.message : String(e); }
     }
     if (sentIds.length) {
       const now = new Date().toISOString();
@@ -270,7 +270,7 @@ export default function App() {
     setSendResult(
       fail === 0
         ? { ok: true, msg: `제출 완료! 기록 ${sentIds.length}건을 선생님께 보냈어요.` }
-        : { ok: false, msg: `${sentIds.length}건 성공 · ${fail}건 실패. 와이파이 확인 후 다시 눌러 주세요.` }
+        : { ok: false, msg: `${sentIds.length}건 성공 · ${fail}건 실패.${lastErr ? ` (${lastErr})` : ""} 와이파이/스크립트 설정을 확인한 뒤 다시 눌러 주세요.` }
     );
   }
 
