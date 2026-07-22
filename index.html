@@ -36,6 +36,9 @@ const C = {
 const KEYWORDS = ["안전", "기술·용접", "교육·제도", "문화", "음식", "기타"];
 const VISITS = ["학교(TAFE)", "회사", "기타"];
 const FORM_URL = "https://forms.gle/X42oD6U71bcfTSydA";
+// 선생님 구글 계정에 배포한 Apps Script 웹앱 주소 (기록을 직접 받아 스프레드시트+드라이브에 저장)
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw9YA317nybx3VViGFWhNLLjd2VBoVlDgKZbH4vgaFOe1fPBS5glkeYCCiOsRb1iv99/exec";
+const SUBMIT_TOKEN = "fieldlog-2026";
 
 function todayStr() {
   const d = new Date();
@@ -130,6 +133,8 @@ function App() {
   const [backupMsg, setBackupMsg] = useState("");
   const fileRef = useRef(null);
   const backupRef = useRef(null);
+  const [sending, setSending] = useState(false);     // 전송 중 여부
+  const [sendResult, setSendResult] = useState(null); // {ok, msg}
 
   // 기록·이름이 바뀔 때마다 이 기기에 자동 저장
   useEffect(() => {
@@ -178,7 +183,8 @@ function App() {
     if (!form.facts.trim()) return setError("본 것을 한 줄이라도 적어 주세요.");
     if (form.photos.length < 2) return setError(`사진을 2장 이상 넣어 주세요. (현재 ${form.photos.length}장)`);
     if (editingId) {
-      setRecords((rs) => rs.map((r) => (r.id === editingId ? { ...form, id: editingId } : r)));
+      // 내용이 바뀌었으니 '제출됨' 표시를 지워 다시 보낼 수 있게 함
+      setRecords((rs) => rs.map((r) => (r.id === editingId ? { ...form, id: editingId, sentAt: null } : r)));
     } else {
       setRecords((rs) => [...rs, { ...form, id: Date.now() }]);
     }
@@ -249,8 +255,48 @@ function App() {
     setImportPending(null);
   }
 
+  // ---- 선생님께 전송 (Google Apps Script) ----
+  async function postRecord(r) {
+    const payload = {
+      token: SUBMIT_TOKEN, name,
+      date: r.date, place: r.place, visit: r.visit,
+      keywords: r.keywords || [], facts: r.facts,
+      impression: r.impression, difference: r.difference,
+      question: r.question, photos: r.photos || [],
+    };
+    // text/plain 으로 보내야 사전요청(preflight) 없이 Apps Script에 도달함
+    const res = await fetch(SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!json || !json.ok) throw new Error((json && json.error) || "서버 오류");
+  }
+  async function submitUnsent() {
+    const targets = records.filter((r) => !r.sentAt);
+    if (!targets.length) { setSendResult({ ok: true, msg: "보낼 새 기록이 없어요. 모두 제출되었습니다." }); return; }
+    setSending(true); setSendResult(null);
+    const sentIds = []; let fail = 0;
+    for (const r of targets) {
+      try { await postRecord(r); sentIds.push(r.id); }
+      catch (e) { fail++; }
+    }
+    if (sentIds.length) {
+      const now = new Date().toISOString();
+      setRecords((rs) => rs.map((r) => (sentIds.includes(r.id) ? { ...r, sentAt: now } : r)));
+    }
+    setSending(false);
+    setSendResult(
+      fail === 0
+        ? { ok: true, msg: `제출 완료! 기록 ${sentIds.length}건을 선생님께 보냈어요.` }
+        : { ok: false, msg: `${sentIds.length}건 성공 · ${fail}건 실패. 와이파이 확인 후 다시 눌러 주세요.` }
+    );
+  }
+
   const sorted = [...records].sort((a, b) => (a.date < b.date ? 1 : -1));
   const chosen = sorted.filter((r) => selected[r.id]);
+  const unsentCount = records.filter((r) => !r.sentAt).length;
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", color: C.ink, fontFamily: "'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',system-ui,sans-serif" }}>
@@ -329,12 +375,20 @@ function App() {
               </div>
             )}
 
-            <button type="button" onClick={() => openExport(true)} disabled={records.length === 0}
+            <button type="button" onClick={submitUnsent} disabled={sending || records.length === 0}
               className="mt-3 w-full flex items-center justify-between rounded-xl px-4 py-3 no-print"
-              style={{ background: C.amber, color: "#fff", opacity: records.length ? 1 : 0.5 }}>
-              <span className="text-sm font-semibold">저녁에 · 오늘 기록 PDF로 제출하기</span>
-              <span className="text-lg leading-none">→</span>
+              style={{ background: C.amber, color: "#fff", opacity: (sending || !records.length) ? 0.6 : 1 }}>
+              <span className="text-sm font-semibold">
+                {sending ? "선생님께 보내는 중…" : `저녁에 · 안 보낸 기록 선생님께 제출하기${unsentCount ? ` (${unsentCount})` : ""}`}
+              </span>
+              <span className="text-lg leading-none">{sending ? "⏳" : "→"}</span>
             </button>
+            {sendResult && (
+              <div className="mt-2 rounded-xl px-3 py-2 text-xs leading-relaxed no-print"
+                style={{ background: sendResult.ok ? C.blueSoft : C.amberSoft, color: sendResult.ok ? C.blue : C.amber, border: `1px solid ${sendResult.ok ? C.blueLine : C.amberLine}` }}>
+                {sendResult.msg}
+              </div>
+            )}
 
             <button type="button" onClick={openBackup}
               className="mt-2 w-full flex items-center justify-between rounded-xl px-4 py-2.5 no-print"
@@ -355,7 +409,12 @@ function App() {
                     style={{ background: C.card, border: `1px solid ${C.line}` }}>
                     <div className="flex items-center justify-between">
                       <div className="text-lg font-bold">{prettyDate(r.date)}</div>
-                      <div className="text-xs" style={{ color: C.steel }}>{r.photos.length}장</div>
+                      <div className="text-xs flex items-center gap-1.5">
+                        {r.sentAt
+                          ? <span style={{ color: "#2E7D46", fontWeight: 700 }}>✓ 제출됨</span>
+                          : <span style={{ color: C.amber, fontWeight: 700 }}>미제출</span>}
+                        <span style={{ color: C.steel }}>{r.photos.length}장</span>
+                      </div>
                     </div>
                     <div className="mt-0.5 text-sm" style={{ color: C.sub }}>
                       {r.place}{r.visit ? ` · ${r.visit}` : ""}
@@ -525,12 +584,11 @@ function App() {
             <div className="no-print">
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setScreen("list")} className="text-sm font-medium" style={{ color: C.steel }}>‹ 목록</button>
-                <div className="text-sm font-semibold">PDF 저장 · 제출</div>
+                <div className="text-sm font-semibold">PDF로 저장 (보고서)</div>
                 <div className="w-10" />
               </div>
               <p className="mt-3 text-sm leading-relaxed" style={{ color: C.sub }}>
-                <b style={{color:C.blue}}>①</b> 포함할 날짜를 고르고 <b>PDF로 저장</b> — 인쇄 화면에서 ‘대상’을 <b>PDF로 저장</b>으로 바꾸면 파일이 저장돼요.<br/>
-                <b style={{color:C.amber}}>②</b> <b>구글 폼 열기</b>를 눌러, 방금 저장한 PDF 파일을 <b>첨부</b>하고 제출하면 끝!
+                포함할 날짜를 고르고 <b>PDF로 저장</b>을 누르면 인쇄 화면이 열려요. 거기서 ‘대상’을 <b>PDF로 저장</b>으로 바꾸면 보고서 PDF가 만들어져요. (제출은 목록 화면의 <b>선생님께 제출하기</b>로 하면 됩니다.)
               </p>
               <div className="mt-3 space-y-2">
                 {sorted.map((r) => (
@@ -544,13 +602,8 @@ function App() {
               <button type="button" onClick={() => window.print()} disabled={chosen.length === 0}
                 className="mt-4 w-full rounded-xl py-3 text-base font-semibold"
                 style={{ background: C.blue, color: "#fff", opacity: chosen.length ? 1 : 0.4 }}>
-                ① PDF로 저장 ({chosen.length}개)
+                PDF로 저장 ({chosen.length}개)
               </button>
-              <a href={FORM_URL} target="_blank" rel="noopener noreferrer"
-                className="mt-2 w-full flex items-center justify-center rounded-xl py-3 text-base font-semibold"
-                style={{ background: C.amber, color: "#fff" }}>
-                ② 구글 폼 열어 PDF 첨부하기
-              </a>
               <div className="mt-6 text-xs font-semibold tracking-widest uppercase" style={{ color: C.steel }}>미리보기</div>
             </div>
 
