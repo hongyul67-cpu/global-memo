@@ -115,6 +115,7 @@ export default function App() {
   const backupRef = useRef(null);
   const [sending, setSending] = useState(false);     // 전송 중 여부
   const [sendResult, setSendResult] = useState(null); // {ok, msg}
+  const [confirmReset, setConfirmReset] = useState(false); // 전체 초기화 확인
 
   // 기록·이름이 바뀔 때마다 이 기기에 자동 저장
   useEffect(() => {
@@ -670,6 +671,17 @@ export default function App() {
                 onChange={(e) => { if (e.target.files[0]) readBackup(e.target.files[0]); e.target.value = ""; }} />
             </div>
 
+            {/* 전체 초기화 */}
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <div className="text-sm font-bold" style={{ color: "#B23B3B" }}>3. 전체 초기화</div>
+              <p className="mt-1 text-sm" style={{ color: C.sub }}>이 기기의 <b>모든 기록을 삭제</b>해요(연습·테스트 기록 정리용). 되돌릴 수 없으니 필요하면 먼저 위에서 <b>백업</b>을 저장하세요.</p>
+              <button type="button" onClick={() => setConfirmReset(true)} disabled={records.length === 0}
+                className="mt-3 w-full rounded-xl py-3 text-base font-semibold"
+                style={{ border: "1px solid #E3B4B4", color: "#B23B3B", background: "#FBEDED", opacity: records.length ? 1 : 0.5 }}>
+                모든 기록 지우기 ({records.length})
+              </button>
+            </div>
+
             {backupMsg && (
               <div className="mt-4 rounded-xl px-3 py-2.5 text-sm font-medium" style={{ background: C.blueSoft, color: C.blue, border: `1px solid ${C.blueLine}` }}>
                 {backupMsg}
@@ -750,6 +762,20 @@ export default function App() {
               className="mt-2 w-full rounded-xl py-2.5 text-sm font-medium" style={{ color: C.steel }}>
               취소
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* reset confirm */}
+      {confirmReset && (
+        <div className="fixed inset-0 flex items-end justify-center no-print" style={{ background: "rgba(27,39,51,0.4)" }} onClick={() => setConfirmReset(false)}>
+          <div className="w-full max-w-md m-4 rounded-2xl p-5" style={{ background: C.card }} onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-bold">모든 기록을 지울까요?</div>
+            <p className="mt-1 text-sm" style={{ color: C.sub }}>기록 {records.length}개가 모두 삭제되고 되돌릴 수 없어요. 필요하면 먼저 백업을 저장하세요.</p>
+            <div className="mt-4 flex gap-3">
+              <button type="button" onClick={() => setConfirmReset(false)} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ border: `1px solid ${C.line}`, color: C.sub }}>그대로 두기</button>
+              <button type="button" onClick={() => { setRecords([]); setConfirmReset(false); setSendResult(null); setBackupMsg("모든 기록을 지웠어요."); }} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ background: "#B23B3B", color: "#fff" }}>모두 지우기</button>
+            </div>
           </div>
         </div>
       )}

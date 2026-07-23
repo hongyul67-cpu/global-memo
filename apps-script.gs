@@ -115,6 +115,7 @@ function json_(obj) {
 }
 
 // 브라우저로 URL을 열었을 때 정상 배포 확인용
+// build 값이 'pdf-v2' 로 보이면 이 PDF 버전이 라이브라는 뜻
 function doGet() {
-  return json_({ ok: true, alive: true });
+  return json_({ ok: true, alive: true, build: 'pdf-v2' });
 }
