@@ -391,6 +391,13 @@ function App() {
               </div>
             )}
 
+            <a href="photos.html"
+              className="mt-2 w-full flex items-center justify-between rounded-xl px-4 py-2.5 no-print"
+              style={{ background: C.blueSoft, color: C.blue, border: `1px solid ${C.blueLine}`, textDecoration: "none" }}>
+              <span className="text-sm font-semibold">📷 사진만 제출하기</span>
+              <span className="text-xs" style={{ color: C.blue }}>사진 → PDF 한 개 →</span>
+            </a>
+
             <button type="button" onClick={openBackup}
               className="mt-2 w-full flex items-center justify-between rounded-xl px-4 py-2.5 no-print"
               style={{ background: C.card, color: C.ink, border: `1px solid ${C.line}` }}>
