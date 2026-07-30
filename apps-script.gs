@@ -9,7 +9,7 @@
  * [처음 배포]  script.google.com → 새 프로젝트 → 이 코드 붙여넣기 → 저장
  *   → 배포 → 새 배포 → 웹 앱 / 실행: 나 / 액세스: 모든 사용자 → URL을 앱 SCRIPT_URL 에
  * [코드 고친 뒤]  배포 → 배포 관리 → (기존 배포) 연필 → 버전 "새 버전" → 배포  (URL 유지)
- * [확인]  URL을 브라우저로 열어 build 값이 "form-v3" 이면 이 양식 버전이 라이브
+ * [확인]  URL을 브라우저로 열어 build 값이 "form-v4" 이면 이 버전(사진 제출 포함)이 라이브
  */
 const TOKEN = 'fieldlog-2026';
 const PDF_FOLDER = '현장기록장 제출PDF';
@@ -25,7 +25,8 @@ function doPost(e) {
     var fit = DriveApp.getFoldersByName(PDF_FOLDER);
     var folder = fit.hasNext() ? fit.next() : DriveApp.createFolder(PDF_FOLDER);
 
-    var pdfFile = makePdf_(data, folder);
+    // type 'photos' 이면 사진만 모은 PDF, 아니면 기존 '학생 활동 보고서' 양식
+    var pdfFile = (data.type === 'photos') ? makePhotoPdf_(data, folder) : makePdf_(data, folder);
 
     var files = DriveApp.getFilesByName(INDEX_SHEET);
     var ss = files.hasNext() ? SpreadsheetApp.open(files.next()) : SpreadsheetApp.create(INDEX_SHEET);
@@ -149,6 +150,80 @@ function makePdf_(data, folder) {
   return saved;
 }
 
+// 사진만 모은 PDF 한 개 (photos.html 에서 type:'photos' 로 보낸 제출)
+function makePhotoPdf_(data, folder) {
+  var safe = function (s) { return String(s || '').replace(/[\\/:*?"<>|]/g, ' ').trim(); };
+  var base = safe(data.name || '이름') + '_' + safe(data.date || '') + '_사진';
+  var BLUE = '#DCE6F1';
+
+  var doc = DocumentApp.create(base);
+  var body = doc.getBody();
+  body.setPageWidth(595).setPageHeight(842);
+  body.setMarginTop(30).setMarginBottom(30).setMarginLeft(40).setMarginRight(40);
+
+  // 상단 안내줄(첫 빈 문단 재사용)
+  var top = body.getChild(0).asParagraph();
+  top.setText('호주 글로벌 현장학습 · 사진 제출');
+  top.editAsText().setBold(false).setFontSize(9).setForegroundColor('#5C6B7A');
+  top.setSpacingAfter(4);
+
+  // 제목
+  var title = body.appendParagraph('활동 사진');
+  title.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  title.editAsText().setBold(true).setFontSize(20).setForegroundColor('#1B2733');
+  title.setSpacingAfter(6);
+
+  // 정보표 (성명 / 제출일)
+  var t1 = body.appendTable([['성명', data.name || '', '제출일', data.date || '']]);
+  styleTable_(t1);
+  t1.setColumnWidth(0, 70); t1.setColumnWidth(2, 70);
+  labelCell_(t1.getRow(0).getCell(0), BLUE); valueCell_(t1.getRow(0).getCell(1));
+  labelCell_(t1.getRow(0).getCell(2), BLUE); valueCell_(t1.getRow(0).getCell(3));
+
+  // 사진 그리드 (2열, 큼직하게)
+  var photos = data.photos || [];
+  if (photos.length) {
+    var per = 2, rows = Math.ceil(photos.length / per), grid = [];
+    for (var r = 0; r < rows; r++) grid.push(['', '']);
+    var pt = body.appendTable(grid);
+    styleTable_(pt);
+    var idx = 0;
+    for (var r2 = 0; r2 < rows; r2++) {
+      pt.getRow(r2).setMinimumHeight(200);
+      for (var c = 0; c < per; c++) {
+        var cell = pt.getRow(r2).getCell(c);
+        cell.setPaddingTop(4).setPaddingBottom(4).setPaddingLeft(4).setPaddingRight(4);
+        if (idx < photos.length) {
+          try {
+            var p = String(photos[idx] || '');
+            var comma = p.indexOf(',');
+            var b64 = comma >= 0 ? p.substring(comma + 1) : p;
+            var im = cell.appendImage(Utilities.newBlob(Utilities.base64Decode(b64), 'image/jpeg'));
+            var w = im.getWidth(), h = im.getHeight(), maxW = 235;
+            if (w > maxW) { im.setWidth(maxW); im.setHeight(Math.round(h * maxW / w)); }
+            var f = cell.getChild(0);
+            if (cell.getNumChildren() > 1 && f.getType() == DocumentApp.ElementType.PARAGRAPH && f.asParagraph().getText() === '') f.removeFromParent();
+          } catch (pe) {
+            cell.setText('[사진 오류]');
+          }
+        }
+        idx++;
+      }
+    }
+  } else {
+    var np = body.appendTable([['(사진 없음)']]);
+    styleTable_(np);
+    np.getRow(0).getCell(0).editAsText().setFontSize(10).setForegroundColor('#7E92A4');
+  }
+
+  doc.saveAndClose();
+  var docFile = DriveApp.getFileById(doc.getId());
+  var pdf = docFile.getAs('application/pdf').setName(base + '.pdf');
+  var saved = folder.createFile(pdf);
+  docFile.setTrashed(true);
+  return saved;
+}
+
 function styleTable_(t) {
   t.setBorderColor('#9DB7D5');
   t.setBorderWidth(0.75);
@@ -189,7 +264,7 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// 브라우저로 URL 열면 확인 가능. build "form-v3" 이면 이 양식 버전이 라이브.
+// 브라우저로 URL 열면 확인 가능. build "form-v4" 이면 사진 제출(type:'photos')까지 지원.
 function doGet() {
-  return json_({ ok: true, alive: true, build: 'form-v3' });
+  return json_({ ok: true, alive: true, build: 'form-v4' });
 }

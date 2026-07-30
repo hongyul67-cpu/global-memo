@@ -22,13 +22,22 @@
 - **내 생각·질문**(인상 깊었던 점+이유 / 한국과 다른 점 / 궁금한 점) — 호박색
 - 사진 2~5장 (2장 미만이면 저장 불가, 업로드 시 1024px로 자동 축소)
 
+## 사진만 제출 (추가 도구)
+- `photos.html` — **사진만** 골라(최대 10장) 저녁에 버튼 한 번으로 제출하면, 사진들을 모은 **PDF 한 개**가 선생님 드라이브에 자동 저장됩니다.
+- 기록장(index.html)과 **같은 제출 링크**(Apps Script)·같은 토큰을 씁니다. 기록장과는 별개로 동작하는 독립 페이지라 기존 앱을 건드리지 않습니다.
+- 서버는 제출에 `type: "photos"` 가 있으면 사진 전용 PDF(`이름_날짜_사진.pdf`)를 만들고, 없으면 기존 '학생 활동 보고서' 양식 PDF를 만듭니다. (`apps-script.gs` build `form-v4`)
+- 본 것·생각까지 남기려면 기록장을, 사진만 빠르게 낼 때는 이 페이지를 쓰면 됩니다.
+
 ## 파일 구성
 - `index.html` — 배포용 단일 파일 앱 (이 파일 하나면 동작)
+- `photos.html` — 사진만 모아 PDF 한 개로 제출하는 추가 도구 (단일 파일)
 - `field-log.jsx` — 원본 React 소스 (참고용)
 - `guide.html` — 학생용 사용 안내 한 장 (폰으로 보거나 인쇄용)
+- `apps-script.gs` — 제출 수신 백엔드 (기록장·사진 제출 공용)
 
 ## 링크 (Pages 켠 뒤)
-- 앱: `https://hongyul67-cpu.github.io/global-memo/`
+- 앱(기록장): `https://hongyul67-cpu.github.io/global-memo/`
+- 사진만 제출: `https://hongyul67-cpu.github.io/global-memo/photos.html`
 - 사용 안내: `https://hongyul67-cpu.github.io/global-memo/guide.html`
 
 ## GitHub Pages 켜는 법

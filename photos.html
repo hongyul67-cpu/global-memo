@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#1E5FA8" />
+<title>호주 현장학습 · 사진 제출</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231E5FA8'/%3E%3Ctext x='50' y='70' font-size='54' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%93%B7%3C/text%3E%3C/svg%3E" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; }
+  #root { min-height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect } = React;
+
+/* 호주 글로벌 현장학습 · 사진 제출 (사진만 모아 PDF 한 개로 제출)
+   - 이름과 사진(최대 10장)만 고르면, 저녁에 '제출하기' 한 번으로
+     선생님 드라이브에 사진들을 모은 PDF 한 개가 자동으로 만들어져요.
+   - 제출 방식은 기록장(index.html)과 동일한 Apps Script 링크를 사용합니다.
+   - 이 페이지는 기록장과 별개로 동작하는 추가 도구입니다. */
+
+const C = {
+  bg: "#F4F6F9", ink: "#1B2733", sub: "#5C6B7A",
+  blue: "#1E5FA8", blueSoft: "#E9F1F9", blueLine: "#B6CFE8",
+  amber: "#C97A0A", amberSoft: "#FBF2E0", amberLine: "#EAD3A0",
+  line: "#D7DEE6", card: "#FFFFFF", steel: "#7E92A4",
+};
+
+const MAX_PHOTOS = 10;
+// 기록장(index.html)과 같은 Apps Script 웹앱 주소 · 같은 토큰
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxx_WHw4KcLFY9E8G_U3-8fV6gtBOXAaWuJf6x5UUolwgg2nI0VBgdiJ_n8I39N2zGv9Q/exec";
+const SUBMIT_TOKEN = "fieldlog-2026";
+
+function todayStr() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// 사진 축소: EXIF 회전 보정(createImageBitmap) + 실패 시 null 반환(멈춤 방지)
+async function downscale(file, max = 1024, quality = 0.72) {
+  const fit = (w, h) => {
+    if (w > h && w > max) return [max, Math.round((h * max) / w)];
+    if (h >= w && h > max) return [Math.round((w * max) / h), max];
+    return [w, h];
+  };
+  try {
+    let src, sw, sh, bmp;
+    if (window.createImageBitmap) {
+      try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+      catch (e) { bmp = await createImageBitmap(file); }
+      src = bmp; sw = bmp.width; sh = bmp.height;
+    } else {
+      src = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = (e) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = e.target.result; };
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height;
+    }
+    const [w, h] = fit(sw, sh);
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(src, 0, 0, w, h);
+    if (bmp && bmp.close) bmp.close();
+    return cv.toDataURL("image/jpeg", quality);
+  } catch (e) {
+    return null; // 이미지가 아니거나 읽기 실패 → 이 파일은 건너뜀
+  }
+}
+
+// ---- 이름 자동 저장 (이 기기에 보관) · 기록장 이름이 있으면 그대로 씀 ----
+const STORE_KEY = "photolog_v1";
+function loadName() {
+  try {
+    const raw = window.localStorage.getItem(STORE_KEY);
+    if (raw) { const o = JSON.parse(raw); if (o && o.name) return o.name; }
+    const fl = window.localStorage.getItem("fieldlog_v1");
+    if (fl) { const o = JSON.parse(fl); if (o && o.name) return o.name; }
+  } catch (e) { /* 저장소 접근이 막힌 환경일 수 있음 */ }
+  return "";
+}
+
+function Eyebrow({ children }) {
+  return (
+    <div className="text-xs font-semibold tracking-widest uppercase" style={{ color: C.steel }}>
+      {children}
+    </div>
+  );
+}
+
+function App() {
+  const [name, setName] = useState(loadName());
+  const [nameDraft, setNameDraft] = useState("");
+  const [ready, setReady] = useState(!!loadName()); // 이름을 정했는지
+  const [date, setDate] = useState(todayStr());
+  const [photos, setPhotos] = useState([]);
+  const [busy, setBusy] = useState(false);          // 사진 처리 중
+  const [sending, setSending] = useState(false);     // 전송 중
+  const [result, setResult] = useState(null);        // {ok, msg}
+  const [editingName, setEditingName] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const fileRef = useRef(null);
+
+  // 이름이 정해지면 이 기기에 저장
+  useEffect(() => {
+    if (!name) return;
+    try { window.localStorage.setItem(STORE_KEY, JSON.stringify({ name })); } catch (e) { /* 무시 */ }
+  }, [name]);
+
+  async function addPhotos(files) {
+    const list = Array.from(files);
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) return;
+    setBusy(true);
+    const next = [];
+    for (const f of list.slice(0, room)) { const d = await downscale(f); if (d) next.push(d); }
+    if (next.length) setPhotos((ps) => [...ps, ...next]);
+    setBusy(false);
+  }
+  function removePhoto(i) {
+    setPhotos((ps) => ps.filter((_, idx) => idx !== i));
+  }
+
+  async function submit() {
+    if (!photos.length) { setResult({ ok: false, msg: "사진을 최소 1장 넣어 주세요." }); return; }
+    setSending(true); setResult(null);
+    try {
+      const payload = {
+        token: SUBMIT_TOKEN, type: "photos",
+        name, date, place: "", visit: "사진 제출",
+        keywords: [], photos,
+      };
+      // text/plain 으로 보내야 사전요청(preflight) 없이 Apps Script에 도달함
+      const res = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!json || !json.ok) throw new Error((json && json.error) || "서버 오류");
+      setResult({ ok: true, msg: `제출 완료! 사진 ${photos.length}장을 PDF 한 개로 만들어 선생님께 보냈어요.` });
+      setPhotos([]);
+    } catch (e) {
+      setResult({ ok: false, msg: `제출하지 못했어요.${e && e.message ? ` (${e.message})` : ""} 와이파이 상태를 확인한 뒤 다시 눌러 주세요.` });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", color: C.ink, fontFamily: "'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',system-ui,sans-serif" }}>
+      <style>{`* { -webkit-tap-highlight-color: transparent; } textarea, input { font-family: inherit; }`}</style>
+
+      <div className="mx-auto w-full max-w-md px-4 pb-16">
+        {/* ---------------- START (이름 정하기) ---------------- */}
+        {!ready && (
+          <div className="pt-20">
+            <Eyebrow>Photo Submit</Eyebrow>
+            <h1 className="mt-2 text-3xl font-bold leading-tight">호주 현장학습<br/>사진 제출</h1>
+            <p className="mt-3 text-sm leading-relaxed" style={{ color: C.sub }}>
+              사진만 골라서 <b style={{ color: C.blue }}>PDF 한 개</b>로 선생님께 제출해요. 이름을 먼저 정해 주세요.
+            </p>
+            <div className="mt-8 rounded-2xl p-5" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <label className="text-sm font-semibold">이름</label>
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && nameDraft.trim()) { setName(nameDraft.trim()); setReady(true); } }}
+                placeholder="예: 김현장"
+                className="mt-2 w-full rounded-xl px-3 py-3 text-base focus:outline-none focus-visible:ring-2"
+                style={{ border: `1px solid ${C.line}`, background: C.bg }}
+              />
+              <button type="button"
+                disabled={!nameDraft.trim()}
+                onClick={() => { setName(nameDraft.trim()); setReady(true); }}
+                className="mt-4 w-full rounded-xl py-3 text-base font-semibold transition-opacity"
+                style={{ background: C.blue, color: "#fff", opacity: nameDraft.trim() ? 1 : 0.4 }}
+              >
+                시작하기
+              </button>
+            </div>
+            <p className="mt-6 text-xs leading-relaxed" style={{ color: C.steel }}>
+              이름은 이 기기에 저장돼요. 나중에 언제든 바꿀 수 있어요.
+            </p>
+          </div>
+        )}
+
+        {/* ---------------- MAIN (사진 고르고 제출) ---------------- */}
+        {ready && (
+          <div className="pt-8">
+            <div className="flex items-end justify-between">
+              <div>
+                <Eyebrow>Photo Submit</Eyebrow>
+                <div className="mt-1 flex items-center gap-2">
+                  <h1 className="text-2xl font-bold">{name} · 사진 제출</h1>
+                  <button type="button" onClick={() => { setRenameDraft(name); setEditingName(true); }}
+                    className="text-xs font-medium rounded-full px-2 py-1" style={{ color: C.blue, background: C.blueSoft, border: `1px solid ${C.blueLine}` }}>
+                    이름 수정
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-xl px-3 py-2 text-xs leading-relaxed" style={{ background: C.blueSoft, color: C.blue, border: `1px solid ${C.blueLine}` }}>
+              사진 최대 {MAX_PHOTOS}장을 고르고 아래 <b>제출하기</b>를 누르면, 사진들을 모은 <b>PDF 한 개</b>가 선생님 드라이브에 저장돼요.
+            </div>
+
+            {/* 날짜 */}
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <label className="text-xs font-semibold" style={{ color: C.sub }}>날짜</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                className="mt-1 w-full rounded-lg px-2 py-2 text-sm focus:outline-none focus-visible:ring-2"
+                style={{ border: `1px solid ${C.line}` }} />
+            </div>
+
+            {/* 사진 */}
+            <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold">사진</span>
+                <span className="text-xs" style={{ color: photos.length === 0 ? C.amber : C.steel }}>
+                  현재 {photos.length}장 · 최대 {MAX_PHOTOS}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {photos.map((p, i) => (
+                  <div key={i} className="relative">
+                    <img src={p} alt="" className="h-24 w-full rounded-lg object-cover" style={{ border: `1px solid ${C.line}` }} />
+                    <button type="button" onClick={() => removePhoto(i)}
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full text-xs font-bold flex items-center justify-center"
+                      style={{ background: C.ink, color: "#fff" }}>×</button>
+                  </div>
+                ))}
+                {photos.length < MAX_PHOTOS && (
+                  <button type="button" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy}
+                    className="h-24 w-full rounded-lg flex flex-col items-center justify-center"
+                    style={{ border: `1.5px dashed ${C.blueLine}`, color: C.blue, background: C.blueSoft, opacity: busy ? 0.6 : 1 }}>
+                    <span className="text-2xl leading-none">{busy ? "⏳" : "+"}</span>
+                    <span className="text-xs mt-1">{busy ? "넣는 중…" : "사진 추가"}</span>
+                  </button>
+                )}
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", border: 0 }}
+                onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
+              />
+            </div>
+
+            {result && (
+              <div className="mt-4 rounded-xl px-3 py-2.5 text-sm font-medium"
+                style={{ background: result.ok ? C.blueSoft : C.amberSoft, color: result.ok ? C.blue : C.amber, border: `1px solid ${result.ok ? C.blueLine : C.amberLine}` }}>
+                {result.msg}
+              </div>
+            )}
+
+            <button type="button" onClick={submit} disabled={sending || busy || photos.length === 0}
+              className="mt-5 w-full flex items-center justify-between rounded-xl px-4 py-3.5"
+              style={{ background: C.amber, color: "#fff", opacity: (sending || busy || !photos.length) ? 0.6 : 1 }}>
+              <span className="text-base font-semibold">
+                {sending ? "선생님께 보내는 중…" : `선생님께 제출하기${photos.length ? ` (${photos.length}장)` : ""}`}
+              </span>
+              <span className="text-lg leading-none">{sending ? "⏳" : "→"}</span>
+            </button>
+
+            <p className="mt-4 text-xs leading-relaxed" style={{ color: C.steel }}>
+              제출하면 사진은 지워지고, 다음 제출을 새로 시작할 수 있어요. 기록(본 것·생각)까지 남기려면 <b>현장 기록장</b>을 쓰세요.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* rename */}
+      {editingName && (
+        <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(27,39,51,0.4)" }} onClick={() => setEditingName(false)}>
+          <div className="w-full max-w-md m-4 rounded-2xl p-5" style={{ background: C.card }} onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-bold">이름 바꾸기</div>
+            <input
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && renameDraft.trim()) { setName(renameDraft.trim()); setEditingName(false); } }}
+              className="mt-3 w-full rounded-xl px-3 py-3 text-base focus:outline-none focus-visible:ring-2"
+              style={{ border: `1px solid ${C.line}`, background: C.bg }}
+            />
+            <div className="mt-4 flex gap-3">
+              <button type="button" onClick={() => setEditingName(false)} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ border: `1px solid ${C.line}`, color: C.sub }}>취소</button>
+              <button type="button" disabled={!renameDraft.trim()} onClick={() => { setName(renameDraft.trim()); setEditingName(false); }}
+                className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ background: C.blue, color: "#fff", opacity: renameDraft.trim() ? 1 : 0.4 }}>저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
