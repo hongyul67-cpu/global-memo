@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from "react";
 /* 호주 글로벌 현장학습 · 현장 기록장 (시제품)
    - 기록 전용. 안전·통솔은 기성 앱(구글 지도·카톡)에 맡김.
    - 핵심 장치: '본 것(사실)' = 파랑 / '내 생각·질문' = 호박색.
-   - 사진 1기록당 2~5장. PDF는 '인쇄 → PDF로 저장' 방식.
+   - 사진 1기록당 0~5장(선택). PDF는 '인쇄 → PDF로 저장' 방식.
    - 시제품이라 새로고침 시 기록이 사라짐(영구 저장 미연결). */
 
 const C = {
@@ -162,7 +162,6 @@ export default function App() {
   function save() {
     if (!form.place.trim()) return setError("장소를 적어 주세요.");
     if (!form.facts.trim()) return setError("본 것을 한 줄이라도 적어 주세요.");
-    if (form.photos.length < 2) return setError(`사진을 2장 이상 넣어 주세요. (현재 ${form.photos.length}장)`);
     if (editingId) {
       // 내용이 바뀌었으니 '제출됨' 표시를 지워 다시 보낼 수 있게 함
       setRecords((rs) => rs.map((r) => (r.id === editingId ? { ...form, id: editingId, sentAt: null } : r)));
@@ -509,8 +508,8 @@ export default function App() {
             <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
               <div className="flex items-center justify-between">
                 <span className="text-sm font-bold">사진</span>
-                <span className="text-xs" style={{ color: form.photos.length < 2 ? C.amber : C.steel }}>
-                  현재 {form.photos.length}장 · 최소 2, 최대 5
+                <span className="text-xs" style={{ color: C.steel }}>
+                  현재 {form.photos.length}장 · 선택, 최대 5
                 </span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">

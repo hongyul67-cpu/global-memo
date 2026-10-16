@@ -23,7 +23,7 @@ const { useState, useRef, useEffect } = React;
 /* 호주 글로벌 현장학습 · 현장 기록장 (시제품)
    - 기록 전용. 안전·통솔은 기성 앱(구글 지도·카톡)에 맡김.
    - 핵심 장치: '본 것(사실)' = 파랑 / '내 생각·질문' = 호박색.
-   - 사진 1기록당 2~5장. PDF는 '인쇄 → PDF로 저장' 방식.
+   - 사진 1기록당 0~5장(선택 — 사진 못 올리는 폰도 글만으로 저장·제출). PDF는 '인쇄 → PDF로 저장' 방식.
    - 시제품이라 새로고침 시 기록이 사라짐(영구 저장 미연결). */
 
 const C = {
@@ -57,21 +57,23 @@ async function downscale(file, max = 1024, quality = 0.72) {
     if (h >= w && h > max) return [Math.round((w * max) / h), max];
     return [w, h];
   };
+  // <img> 로 읽기 (createImageBitmap 이 없거나 실패한 폰용 예비 길)
+  const viaImg = () => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("img")); };
+    img.src = url;
+  });
   try {
     let src, sw, sh, bmp;
     if (window.createImageBitmap) {
       try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-      catch (e) { bmp = await createImageBitmap(file); }
-      src = bmp; sw = bmp.width; sh = bmp.height;
-    } else {
-      src = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = (e) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = e.target.result; };
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height;
+      catch (e) { try { bmp = await createImageBitmap(file); } catch (e2) { bmp = null; } }
     }
+    if (bmp) { src = bmp; sw = bmp.width; sh = bmp.height; }
+    else { src = await viaImg(); sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height; }
+    if (!sw || !sh) return null;
     const [w, h] = fit(sw, sh);
     const cv = document.createElement("canvas");
     cv.width = w; cv.height = h;
@@ -154,14 +156,16 @@ function App() {
   };
   const [form, setForm] = useState(blankForm);
   const [error, setError] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false); // 사진 줄이는 중
+  const [photoMsg, setPhotoMsg] = useState("");      // 사진 안내(읽기 실패 등)
 
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   function openNew() {
-    setForm(blankForm); setEditingId(null); setError(""); setScreen("form");
+    setForm(blankForm); setEditingId(null); setError(""); setPhotoMsg(""); setScreen("form");
   }
   function openEdit(r) {
-    setForm({ ...blankForm, ...r }); setEditingId(r.id); setError(""); setScreen("form");
+    setForm({ ...blankForm, ...r }); setEditingId(r.id); setError(""); setPhotoMsg(""); setScreen("form");
   }
   function toggleKeyword(k) {
     setF("keywords", form.keywords.includes(k)
@@ -169,12 +173,21 @@ function App() {
       : [...form.keywords, k]);
   }
   async function addPhotos(files) {
-    const list = Array.from(files);
+    const list = Array.from(files || []);
     const room = 5 - form.photos.length;
-    if (room <= 0) return;
-    const next = [];
-    for (const f of list.slice(0, room)) { const d = await downscale(f); if (d) next.push(d); }
-    if (next.length) setForm((f) => ({ ...f, photos: [...f.photos, ...next] }));
+    if (room <= 0 || !list.length) return;
+    setPhotoBusy(true); setPhotoMsg("");
+    const next = []; let bad = 0;
+    try {
+      for (const f of list.slice(0, room)) {
+        let d = null;
+        try { d = await downscale(f); } catch (e) { d = null; }
+        if (d) next.push(d); else bad++;
+      }
+    } finally { setPhotoBusy(false); }
+    if (next.length) setForm((f) => ({ ...f, photos: [...f.photos, ...next].slice(0, 5) }));
+    if (bad) setPhotoMsg(`사진 ${bad}장은 이 폰에서 읽지 못했어요. 다른 사진을 고르거나, 사진 없이 저장해도 괜찮아요.`);
+    else if (list.length > room) setPhotoMsg(`사진은 최대 5장이라 ${room}장만 넣었어요.`);
   }
   function removePhoto(i) {
     setForm((f) => ({ ...f, photos: f.photos.filter((_, idx) => idx !== i) }));
@@ -182,7 +195,8 @@ function App() {
   function save() {
     if (!form.place.trim()) return setError("장소를 적어 주세요.");
     if (!form.facts.trim()) return setError("본 것을 한 줄이라도 적어 주세요.");
-    if (form.photos.length < 2) return setError(`사진을 2장 이상 넣어 주세요. (현재 ${form.photos.length}장)`);
+    // 사진은 선택 — 사진을 못 올리는 폰도 글만으로 저장·제출할 수 있게 함
+    if (photoBusy) return setError("사진을 넣는 중이에요. 잠깐만 기다렸다가 다시 눌러 주세요.");
     if (editingId) {
       // 내용이 바뀌었으니 '제출됨' 표시를 지워 다시 보낼 수 있게 함
       setRecords((rs) => rs.map((r) => (r.id === editingId ? { ...form, id: editingId, sentAt: null } : r)));
@@ -266,13 +280,20 @@ function App() {
       question: r.question, photos: r.photos || [],
     };
     // text/plain 으로 보내야 사전요청(preflight) 없이 Apps Script에 도달함
-    const res = await fetch(SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-    if (!json || !json.ok) throw new Error((json && json.error) || "서버 오류");
+    let res;
+    try {
+      res = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      throw new Error("인터넷 연결이 끊겼거나 약해요");
+    }
+    let json = null;
+    try { json = await res.json(); } catch (e) { json = null; }
+    if (!json) throw new Error(`서버 응답을 읽지 못했어요(${res.status})`);
+    if (!json.ok) throw new Error(json.error || "서버 오류");
   }
   async function submitUnsent() {
     const targets = records.filter((r) => !r.sentAt);
@@ -535,9 +556,9 @@ function App() {
             {/* PHOTOS */}
             <div className="mt-4 rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
               <div className="flex items-center justify-between">
-                <span className="text-sm font-bold">사진</span>
-                <span className="text-xs" style={{ color: form.photos.length < 2 ? C.amber : C.steel }}>
-                  현재 {form.photos.length}장 · 최소 2, 최대 5
+                <span className="text-sm font-bold">사진 <span className="text-xs font-medium" style={{ color: C.steel }}>(선택)</span></span>
+                <span className="text-xs" style={{ color: C.steel }}>
+                  현재 {form.photos.length}장 · 최대 5
                 </span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
@@ -550,14 +571,22 @@ function App() {
                   </div>
                 ))}
                 {form.photos.length < 5 && (
-                  <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
+                  <button type="button" onClick={() => fileRef.current && fileRef.current.click()} disabled={photoBusy}
                     className="h-24 w-full rounded-lg flex flex-col items-center justify-center"
-                    style={{ border: `1.5px dashed ${C.blueLine}`, color: C.blue, background: C.blueSoft }}>
-                    <span className="text-2xl leading-none">+</span>
-                    <span className="text-xs mt-1">사진 추가</span>
+                    style={{ border: `1.5px dashed ${C.blueLine}`, color: C.blue, background: C.blueSoft, opacity: photoBusy ? 0.6 : 1 }}>
+                    <span className="text-2xl leading-none">{photoBusy ? "⏳" : "+"}</span>
+                    <span className="text-xs mt-1">{photoBusy ? "넣는 중…" : "사진 추가"}</span>
                   </button>
                 )}
               </div>
+              <p className="mt-2 text-xs leading-relaxed" style={{ color: C.steel }}>
+                사진이 안 올라가도 괜찮아요. 글만 적고 저장·제출할 수 있어요.
+              </p>
+              {photoMsg && (
+                <div className="mt-2 rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: C.amberSoft, color: C.amber, border: `1px solid ${C.amberLine}` }}>
+                  {photoMsg}
+                </div>
+              )}
               <input
                 ref={fileRef}
                 type="file"
