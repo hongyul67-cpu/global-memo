@@ -44,28 +44,68 @@ function todayStr() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+// 사진 넣기: 먼저 그대로 읽어 보고, 못 읽으면 HEIC(갤럭시 '고효율 사진'·아이폰 원본)인지 보고 JPG 로 바꿔 다시 읽음
+async function downscale(file, max = 1024, quality = 0.72, onNote) {
+  let d = await decodeImage(file, max, quality);
+  if (d || !(await isHeic(file))) return d;
+  try {
+    if (onNote) onNote("HEIC 사진을 JPG 로 바꾸는 중… (한 장에 몇 초 걸려요)");
+    const lib = await loadHeic();
+    let out = await lib({ blob: file, toType: "image/jpeg", quality: 0.9 });
+    if (Array.isArray(out)) out = out[0];
+    d = await decodeImage(out, max, quality);
+  } catch (e) { d = null; }
+  return d;
+}
+async function isHeic(file) {
+  if (/hei[cf]/i.test(file.type || "") || /\.(heic|heif)$/i.test(file.name || "")) return true;
+  try { // 형식 이름이 비어 오는 폰이 있어 파일 머리(ftyp…)로도 확인
+    const b = new Uint8Array(await new Response(file.slice(4, 12)).arrayBuffer());
+    return /^ftyp(heic|heix|hevc|hevx|heim|heis|mif1|msf1)/.test(String.fromCharCode.apply(null, b));
+  } catch (e) { return false; }
+}
+let heicLib = null; // 변환기는 필요할 때만 내려받음(약 1.3MB)
+function loadHeic() {
+  if (window.heic2any) return Promise.resolve(window.heic2any);
+  if (!heicLib) heicLib = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+    s.onload = () => (window.heic2any ? res(window.heic2any) : rej(new Error("heic")));
+    s.onerror = () => { heicLib = null; rej(new Error("heic-load")); };
+    document.head.appendChild(s);
+  });
+  return heicLib;
+}
+function fileTag(f) { // 못 읽은 사진 안내용: "HEIC · 3.1MB"
+  const ext = ((f.name || "").match(/\.([a-z0-9]+)$/i) || [])[1] || (f.type || "").replace("image/", "") || "?";
+  return `${ext.toUpperCase()} · ${(f.size / 1048576).toFixed(1)}MB`;
+}
 // 사진 축소: EXIF 회전 보정(createImageBitmap) + 실패 시 null 반환(멈춤 방지)
-async function downscale(file, max = 1024, quality = 0.72) {
+async function decodeImage(file, max = 1024, quality = 0.72) {
   const fit = (w, h) => {
     if (w > h && w > max) return [max, Math.round((h * max) / w)];
     if (h >= w && h > max) return [Math.round((w * max) / h), max];
     return [w, h];
   };
+  // <img> 로 읽기 (createImageBitmap 이 없거나 실패한 폰용 예비 길)
+  const viaImg = () => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("img")); };
+    img.src = url;
+  });
   try {
     let src, sw, sh, bmp;
     if (window.createImageBitmap) {
       try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-      catch (e) { bmp = await createImageBitmap(file); }
-      src = bmp; sw = bmp.width; sh = bmp.height;
-    } else {
-      src = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = (e) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = e.target.result; };
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height;
+      catch (e) { try { bmp = await createImageBitmap(file); } catch (e2) { bmp = null; } }
+      // 아주 큰 사진(5천만 화소 등)은 메모리가 모자라 실패할 수 있어 줄여서 읽기를 한 번 더
+      if (!bmp) { try { bmp = await createImageBitmap(file, { resizeWidth: max, resizeQuality: "medium", imageOrientation: "from-image" }); } catch (e3) { bmp = null; } }
     }
+    if (bmp) { src = bmp; sw = bmp.width; sh = bmp.height; }
+    else { src = await viaImg(); sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height; }
+    if (!sw || !sh) return null;
     const [w, h] = fit(sw, sh);
     const cv = document.createElement("canvas");
     cv.width = w; cv.height = h;
@@ -121,10 +161,16 @@ function App() {
     const room = MAX_PHOTOS - photos.length;
     if (room <= 0) return;
     setBusy(true);
-    const next = [];
-    for (const f of list.slice(0, room)) { const d = await downscale(f); if (d) next.push(d); }
+    const next = []; const bad = [];
+    setResult(null);
+    for (const f of list.slice(0, room)) {
+      let d = null;
+      try { d = await downscale(f, 1024, 0.72, (m) => setResult({ ok: true, msg: m })); } catch (e) { d = null; }
+      if (d) next.push(d); else bad.push(f);
+    }
     if (next.length) setPhotos((ps) => [...ps, ...next]);
     setBusy(false);
+    setResult(bad.length ? { ok: false, msg: `사진 ${bad.length}장은 이 폰에서 읽지 못했어요 (${fileTag(bad[0])}). 인터넷이 될 때 다시 넣어 보거나, 다른 사진·화면 캡처로 넣어 보세요.` } : null);
   }
   function removePhoto(i) {
     setPhotos((ps) => ps.filter((_, idx) => idx !== i));

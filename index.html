@@ -45,13 +45,53 @@ function todayStr() {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+function koMD(s) { // "2026-10-19" → "10월 19일"
+  const [, m, d] = String(s || "").split("-");
+  return m && d ? `${Number(m)}월 ${Number(d)}일` : String(s || "");
+}
 function prettyDate(s) {
   if (!s) return "";
   const [y, m, d] = s.split("-");
   return `${y}. ${m}. ${d}.`;
 }
+// 사진 넣기: 먼저 그대로 읽어 보고, 못 읽으면 HEIC(갤럭시 '고효율 사진'·아이폰 원본)인지 보고 JPG 로 바꿔 다시 읽음
+async function downscale(file, max = 1024, quality = 0.72, onNote) {
+  let d = await decodeImage(file, max, quality);
+  if (d || !(await isHeic(file))) return d;
+  try {
+    if (onNote) onNote("HEIC 사진을 JPG 로 바꾸는 중… (한 장에 몇 초 걸려요)");
+    const lib = await loadHeic();
+    let out = await lib({ blob: file, toType: "image/jpeg", quality: 0.9 });
+    if (Array.isArray(out)) out = out[0];
+    d = await decodeImage(out, max, quality);
+  } catch (e) { d = null; }
+  return d;
+}
+async function isHeic(file) {
+  if (/hei[cf]/i.test(file.type || "") || /\.(heic|heif)$/i.test(file.name || "")) return true;
+  try { // 형식 이름이 비어 오는 폰이 있어 파일 머리(ftyp…)로도 확인
+    const b = new Uint8Array(await new Response(file.slice(4, 12)).arrayBuffer());
+    return /^ftyp(heic|heix|hevc|hevx|heim|heis|mif1|msf1)/.test(String.fromCharCode.apply(null, b));
+  } catch (e) { return false; }
+}
+let heicLib = null; // 변환기는 필요할 때만 내려받음(약 1.3MB)
+function loadHeic() {
+  if (window.heic2any) return Promise.resolve(window.heic2any);
+  if (!heicLib) heicLib = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+    s.onload = () => (window.heic2any ? res(window.heic2any) : rej(new Error("heic")));
+    s.onerror = () => { heicLib = null; rej(new Error("heic-load")); };
+    document.head.appendChild(s);
+  });
+  return heicLib;
+}
+function fileTag(f) { // 못 읽은 사진 안내용: "HEIC · 3.1MB"
+  const ext = ((f.name || "").match(/\.([a-z0-9]+)$/i) || [])[1] || (f.type || "").replace("image/", "") || "?";
+  return `${ext.toUpperCase()} · ${(f.size / 1048576).toFixed(1)}MB`;
+}
 // 사진 축소: EXIF 회전 보정(createImageBitmap) + 실패 시 null 반환(멈춤 방지)
-async function downscale(file, max = 1024, quality = 0.72) {
+async function decodeImage(file, max = 1024, quality = 0.72) {
   const fit = (w, h) => {
     if (w > h && w > max) return [max, Math.round((h * max) / w)];
     if (h >= w && h > max) return [Math.round((w * max) / h), max];
@@ -70,6 +110,8 @@ async function downscale(file, max = 1024, quality = 0.72) {
     if (window.createImageBitmap) {
       try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
       catch (e) { try { bmp = await createImageBitmap(file); } catch (e2) { bmp = null; } }
+      // 아주 큰 사진(5천만 화소 등)은 메모리가 모자라 실패할 수 있어 줄여서 읽기를 한 번 더
+      if (!bmp) { try { bmp = await createImageBitmap(file, { resizeWidth: max, resizeQuality: "medium", imageOrientation: "from-image" }); } catch (e3) { bmp = null; } }
     }
     if (bmp) { src = bmp; sw = bmp.width; sh = bmp.height; }
     else { src = await viaImg(); sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height; }
@@ -93,6 +135,42 @@ function loadStore() {
     if (raw) return JSON.parse(raw);
   } catch (e) { /* 미리보기 환경 등에서는 저장소 접근이 막힐 수 있음 */ }
   return null;
+}
+// 사진은 IndexedDB 에 따로 보관 (localStorage 는 5MB 남짓이라 사진 20장쯤이면 가득 참 →
+// 그 뒤로는 새 사진·제출됨 표시가 저장되지 않아 "사진이 안 올라가요"·중복 제출이 생겼음)
+const PHOTO_DB = "fieldlog_photos";
+function photoDb() {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("no-idb"));
+    const q = indexedDB.open(PHOTO_DB, 1);
+    q.onupgradeneeded = () => q.result.createObjectStore("photos");
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error || new Error("idb"));
+  });
+}
+async function photoLoadAll() {
+  const db = await photoDb();
+  return new Promise((res, rej) => {
+    const map = new Map(); // 기록 id → 사진 배열
+    const tx = db.transaction("photos", "readonly");
+    const cur = tx.objectStore("photos").openCursor();
+    cur.onsuccess = () => { const c = cur.result; if (c) { map.set(c.key, c.value); c.continue(); } };
+    tx.oncomplete = () => { db.close(); res(map); };
+    tx.onerror = () => { db.close(); rej(tx.error); };
+  });
+}
+// puts: [[기록 id, [사진…]], …] 저장, dels: [기록 id…] 지움
+async function photoWrite(puts, dels) {
+  const db = await photoDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("photos", "readwrite");
+    const st = tx.objectStore("photos");
+    puts.forEach(([id, ph]) => st.put(ph, id));
+    dels.forEach((id) => st.delete(id));
+    tx.oncomplete = () => { db.close(); res(); };
+    tx.onerror = () => { db.close(); rej(tx.error); };
+    tx.onabort = () => { db.close(); rej(tx.error || new Error("abort")); };
+  });
 }
 
 function Chip({ active, children, onClick }) {
@@ -140,14 +218,56 @@ function App() {
   const [confirmReset, setConfirmReset] = useState(false); // 전체 초기화 확인
 
   // 기록·이름이 바뀔 때마다 이 기기에 자동 저장
+  //  글 → localStorage, 사진 → IndexedDB (IndexedDB 를 못 쓰는 폰만 예전처럼 사진까지 localStorage)
+  const [photosReady, setPhotosReady] = useState(false);
+  const savedPhotos = useRef(new Map()); // IndexedDB 에 이미 들어간 사진 배열 (기록 id → 배열)
+  const idbOK = useRef(true);
+  const latest = useRef({ name, records });
+  latest.current = { name, records };
+  const chain = useRef(Promise.resolve()); // 저장을 한 줄로 세움(앞 저장이 끝난 뒤 다음 저장)
+
+  // 처음 한 번: IndexedDB 의 사진을 기록에 다시 붙임. 예전 판에서 localStorage 에 든 사진은 그대로 두었다가 아래 저장 때 옮김
   useEffect(() => {
+    photoLoadAll().then((map) => {
+      savedPhotos.current = map;
+      setRecords((rs) => rs.map((r) => (
+        (!r.photos || !r.photos.length) && map.has(r.id) ? { ...r, photos: map.get(r.id) } : r)));
+    }).catch(() => { idbOK.current = false; })
+      .then(() => setPhotosReady(true));
+  }, []);
+
+  async function persist() {
+    const { name, records } = latest.current;
+    let inDb = false;
+    if (idbOK.current) {
+      const puts = [], dels = [], ids = new Set();
+      records.forEach((r) => {
+        ids.add(r.id);
+        const ph = r.photos || [];
+        if (savedPhotos.current.get(r.id) !== ph) puts.push([r.id, ph]);
+      });
+      savedPhotos.current.forEach((_, id) => { if (!ids.has(id)) dels.push(id); });
+      try {
+        if (puts.length || dels.length) await photoWrite(puts, dels);
+        puts.forEach(([id, ph]) => savedPhotos.current.set(id, ph));
+        dels.forEach((id) => savedPhotos.current.delete(id));
+        inDb = true;
+      } catch (e) {
+        idbOK.current = false;
+      }
+    }
     try {
-      window.localStorage.setItem(STORE_KEY, JSON.stringify({ name, records }));
+      const keep = inDb ? records.map((r) => (r.photos && r.photos.length ? { ...r, photos: [] } : r)) : records;
+      window.localStorage.setItem(STORE_KEY, JSON.stringify({ name, records: keep }));
       setStoreWarn(false);
     } catch (e) {
       setStoreWarn(true);
     }
-  }, [name, records]);
+  }
+  useEffect(() => {
+    if (!photosReady) return; // 사진을 다 불러오기 전에 쓰면 사진 없는 기록으로 덮어씀
+    chain.current = chain.current.then(persist, persist);
+  }, [name, records, photosReady]);
 
   // form state
   const blankForm = {
@@ -177,16 +297,22 @@ function App() {
     const room = 5 - form.photos.length;
     if (room <= 0 || !list.length) return;
     setPhotoBusy(true); setPhotoMsg("");
-    const next = []; let bad = 0;
+    const next = []; const bad = [];
     try {
       for (const f of list.slice(0, room)) {
         let d = null;
-        try { d = await downscale(f); } catch (e) { d = null; }
-        if (d) next.push(d); else bad++;
+        try { d = await downscale(f, 1024, 0.72, setPhotoMsg); } catch (e) { d = null; }
+        if (d) next.push(d); else bad.push(f);
       }
     } finally { setPhotoBusy(false); }
     if (next.length) setForm((f) => ({ ...f, photos: [...f.photos, ...next].slice(0, 5) }));
-    if (bad) setPhotoMsg(`사진 ${bad}장은 이 폰에서 읽지 못했어요. 다른 사진을 고르거나, 사진 없이 저장해도 괜찮아요.`);
+    setPhotoMsg("");
+    if (bad.length) {
+      const heic = bad.some((f) => /\.(heic|heif)$/i.test(f.name || "") || /hei[cf]/i.test(f.type || ""));
+      setPhotoMsg(`사진 ${bad.length}장은 이 폰에서 읽지 못했어요 (${fileTag(bad[0])}). `
+        + (heic ? "인터넷이 될 때 다시 넣어 보거나, 카메라 설정에서 '고효율 사진'을 끄고 찍으면 잘 들어가요. " : "다른 사진을 고르거나, 화면 캡처한 사진으로 넣어 보세요. ")
+        + "사진 없이 저장해도 괜찮아요.");
+    }
     else if (list.length > room) setPhotoMsg(`사진은 최대 5장이라 ${room}장만 넣었어요.`);
   }
   function removePhoto(i) {
@@ -198,8 +324,17 @@ function App() {
     // 사진은 선택 — 사진을 못 올리는 폰도 글만으로 저장·제출할 수 있게 함
     if (photoBusy) return setError("사진을 넣는 중이에요. 잠깐만 기다렸다가 다시 눌러 주세요.");
     if (editingId) {
-      // 내용이 바뀌었으니 '제출됨' 표시를 지워 다시 보낼 수 있게 함
-      setRecords((rs) => rs.map((r) => (r.id === editingId ? { ...form, id: editingId, sentAt: null } : r)));
+      const old = records.find((r) => r.id === editingId) || {};
+      const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
+      const op = old.photos || [], fp = form.photos || [];
+      const changed = ["date", "place", "visit", "keywords", "facts", "impression", "difference", "question"]
+        .some((k) => !same(old[k], form[k])) || op.length !== fp.length || op.some((p, i) => p !== fp[i]);
+      if (changed) {
+        // 내용이 바뀌었으니 '제출됨' 표시를 지워 다시 보낼 수 있게 함. 이미 낸 기록이면 다음 제출이 '수정본'
+        const sentCount = old.sentCount || (old.sentAt ? 1 : 0);
+        setRecords((rs) => rs.map((r) => (r.id === editingId
+          ? { ...form, id: editingId, sentAt: null, sentCount, editedAt: sentCount ? todayStr() : null } : r)));
+      }
     } else {
       setRecords((rs) => [...rs, { ...form, id: Date.now() }]);
     }
@@ -272,9 +407,13 @@ function App() {
 
   // ---- 선생님께 전송 (Google Apps Script) ----
   async function postRecord(r) {
+    // 이미 낸 기록을 고쳐 다시 내면 날짜 칸에 '수정본'과 고친 날짜를 붙임
+    // → 선생님 쪽 PDF 일시 칸·파일 이름·제출목록에 그대로 보임 (구글 코드 재배포 필요 없음)
+    const rev = r.sentCount || 0;
+    const date = rev ? `${r.date} (수정본${rev > 1 ? " " + rev : ""} · ${koMD(r.editedAt || todayStr())} 수정)` : r.date;
     const payload = {
       token: SUBMIT_TOKEN, name,
-      date: r.date, place: r.place, visit: r.visit,
+      date, place: r.place, visit: r.visit, revision: rev, editedAt: r.editedAt || null,
       keywords: r.keywords || [], facts: r.facts,
       impression: r.impression, difference: r.difference,
       question: r.question, photos: r.photos || [],
@@ -306,7 +445,7 @@ function App() {
     }
     if (sentIds.length) {
       const now = new Date().toISOString();
-      setRecords((rs) => rs.map((r) => (sentIds.includes(r.id) ? { ...r, sentAt: now } : r)));
+      setRecords((rs) => rs.map((r) => (sentIds.includes(r.id) ? { ...r, sentAt: now, sentCount: (r.sentCount || 0) + 1 } : r)));
     }
     setSending(false);
     setSendResult(
@@ -393,7 +532,7 @@ function App() {
 
             {storeWarn && (
               <div className="mt-2 rounded-xl px-3 py-2 text-xs leading-relaxed no-print" style={{ background: C.amberSoft, color: C.amber, border: `1px solid ${C.amberLine}` }}>
-                저장 공간이 부족해요. 오래된 날짜를 PDF로 내보낸 뒤 지우면 공간이 생겨요. (미리보기 화면에서는 저장이 안 될 수 있어요.)
+                이 폰에 저장이 안 되고 있어요. 새로 쓴 기록은 지금 바로 [선생님께 제출]을 눌러 보내 두세요. (창을 닫으면 사라질 수 있어요.)
               </div>
             )}
 
@@ -440,8 +579,10 @@ function App() {
                       <div className="text-lg font-bold">{prettyDate(r.date)}</div>
                       <div className="text-xs flex items-center gap-1.5">
                         {r.sentAt
-                          ? <span style={{ color: "#2E7D46", fontWeight: 700 }}>✓ 제출됨</span>
-                          : <span style={{ color: C.amber, fontWeight: 700 }}>미제출</span>}
+                          ? <span style={{ color: "#2E7D46", fontWeight: 700 }}>✓ {(r.sentCount || 1) > 1 ? "수정본 " : ""}제출됨</span>
+                          : r.sentCount
+                            ? <span style={{ color: C.amber, fontWeight: 700 }}>✎ 수정본 미제출</span>
+                            : <span style={{ color: C.amber, fontWeight: 700 }}>미제출</span>}
                         <span style={{ color: C.steel }}>{r.photos.length}장</span>
                       </div>
                     </div>
@@ -480,6 +621,12 @@ function App() {
               <div className="text-sm font-semibold">{editingId ? "기록 수정" : "오늘 기록"}</div>
               <div className="w-10" />
             </div>
+            {editingId && (form.sentAt || form.sentCount) ? (
+              <div className="mt-3 rounded-xl px-3 py-2 text-xs leading-relaxed" style={{ background: C.blueSoft, color: C.blue, border: `1px solid ${C.blueLine}` }}>
+                이미 선생님께 낸 기록이에요. 고친 뒤 [수정 저장] → [선생님께 제출하기]를 누르면
+                <b> '수정본'(고친 날짜 표시)</b>으로 다시 보내져요. 처음 낸 것도 선생님께 그대로 남아요.
+              </div>
+            ) : null}
 
             {/* meta */}
             <div className="mt-4 rounded-2xl p-4 space-y-4" style={{ background: C.card, border: `1px solid ${C.line}` }}>
